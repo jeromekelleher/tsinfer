@@ -614,6 +614,11 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
     double min_parent_time;
     node_id_t mapped_child = mapped[0].dest->edge.child;
     size_t j;
+    /* This is an arbitrary small value which ensures that the synthetic node
+     * is younger than its parents. We'd need an unrealistically large number
+     * of synthetic nodes to copy from each other sequentially for this to
+     * violate the child-parent timing rule. */
+    const double delta = 1e-8;
 
     min_parent_time = self->time[0] + 1;
     for (j = 0; j < num_mapped; j++) {
@@ -621,7 +626,7 @@ tree_sequence_builder_make_synthetic_node(tree_sequence_builder_t *self,
         min_parent_time = TSI_MIN(
             min_parent_time, self->time[mapped[j].source->edge.parent]);
     }
-    ret = tree_sequence_builder_add_node(self, min_parent_time - 0.5, false, true);
+    ret = tree_sequence_builder_add_node(self, min_parent_time - delta, false, true);
     if (ret < 0) {
         goto out;
     }

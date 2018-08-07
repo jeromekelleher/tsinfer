@@ -378,8 +378,9 @@ class TreeSequenceBuilder(object):
             edge = edge.next
         assert min_parent_time >= 0
         assert min_parent_time <= self.time[0]
-        # print("min_parent_time = ", min_parent_time)
-        self.time[node_id] = min_parent_time - 0.5
+        # Arbitrary small value. We'd need 10^8 synthetic nodes to sequentially
+        # copy from each other for this to violate the time-travel rule.
+        self.time[node_id] = min_parent_time - 1e-8
 
     def create_synthetic_node(self, matches):
         # If we have more than one edge matching to a given path, then we create

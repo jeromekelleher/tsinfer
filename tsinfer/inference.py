@@ -28,6 +28,7 @@ import logging
 import threading
 import json
 import heapq
+import math
 
 import numpy as np
 import humanize
@@ -188,7 +189,8 @@ def match_ancestors(
 def match_samples(
         sample_data, ancestors_ts, progress_monitor=None, num_threads=0,
         path_compression=True, simplify=True, extended_checks=False,
-        stabilise_node_ordering=False, engine=constants.C_ENGINE):
+        stabilise_node_ordering=False, engine=constants.C_ENGINE,
+        chunk_size=None):
     """
     match_samples(sample_data, ancestors_ts, num_threads=0, simplify=True)
 
@@ -214,7 +216,11 @@ def match_samples(
         sample_data, ancestors_ts, path_compression=path_compression,
         engine=engine, progress_monitor=progress_monitor, num_threads=num_threads,
         extended_checks=extended_checks)
-    manager.match_samples()
+    if chunk_size is None:
+        chunk_size = 1024
+    if chunk_size <= 0 or int(chunk_size) != chunk_size:
+        raise ValueError("Chunk size must be an integer >= 0")
+    manager.match_samples(chunk_size)
     ts = manager.finalise(
         simplify=simplify, stabilise_node_ordering=stabilise_node_ordering)
     return ts
@@ -874,7 +880,6 @@ class SampleMatcher(Matcher):
         super().__init__(sample_data, **kwargs)
         self.restore_tree_sequence_builder(ancestors_ts)
         self.ancestors_ts = ancestors_ts
-        self.sample_haplotypes = self.sample_data.haplotypes(inference_sites=True)
         self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
         for j in range(self.num_samples):
             self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
@@ -886,15 +891,11 @@ class SampleMatcher(Matcher):
         derived_state = haplotype[diffs]
         self.results.set_mutations(sample_id, diffs.astype(np.int32), derived_state)
 
-    def __match_samples_single_threaded(self):
-        j = 0
-        for a in self.sample_haplotypes:
-            sample_id = self.sample_ids[j]
+    def __match_samples_single_threaded(self, work_iterator):
+        for sample_id, a in work_iterator:
             self.__process_sample(sample_id, a)
-            j += 1
-        assert j == self.num_samples
 
-    def __match_samples_multi_threaded(self):
+    def __match_samples_multi_threaded(self, work_iterator):
         # Note that this function is not almost identical to the match_ancestors
         # multithreaded function above. All we need to do is provide a function
         # to do the matching and some producer for the actual items and we
@@ -920,7 +921,7 @@ class SampleMatcher(Matcher):
             for j in range(self.num_threads)]
         logger.debug("Started {} match worker threads".format(self.num_threads))
 
-        for sample_id, a in zip(self.sample_ids, self.sample_haplotypes):
+        for sample_id, a in work_iterator:
             match_queue.put((sample_id, a))
 
         # Stop the the worker threads.
@@ -929,28 +930,59 @@ class SampleMatcher(Matcher):
         for j in range(self.num_threads):
             match_threads[j].join()
 
-    def match_samples(self):
-        logger.info("Started matching for {} samples".format(self.num_samples))
-        if self.sample_data.num_inference_sites > 0:
-            self.match_progress = self.progress_monitor.get(
-                    "ms_match", self.num_samples)
+    def match_samples(self, chunk_size):
+        if self.sample_data.num_inference_sites == 0:
+            return
+        num_chunks = int(math.ceil(self.num_samples / chunk_size))
+        logger.info("Started matching for {} samples in {} chunks".format(
+            self.num_samples, num_chunks))
+
+        self.match_progress = self.progress_monitor.get("ms_match", self.num_samples)
+        sample_haplotype_iter = zip(
+            map(int, self.sample_ids),
+            self.sample_data.haplotypes(inference_sites=True))
+
+        def chunked_sample_iterator():
+            # Iterates over at most chunk_size values in the sample_haplotype_iter
+            for _ in range(chunk_size):
+                yield next(sample_haplotype_iter)
+
+        for chunk in range(num_chunks):
+            iterator = chunked_sample_iterator()
             if self.num_threads <= 0:
-                self.__match_samples_single_threaded()
+                self.__match_samples_single_threaded(iterator)
             else:
-                self.__match_samples_multi_threaded()
-            self.match_progress.close()
+                self.__match_samples_multi_threaded(iterator)
+
+            logger.info("Finished chunk {}", chunk)
+
             logger.info("Inserting sample paths: {} edges in total".format(
                 self.results.total_edges))
-            progress_monitor = self.progress_monitor.get("ms_paths", self.num_samples)
-            for j in range(self.num_samples):
-                sample_id = int(self.sample_ids[j])
+            start = chunk * chunk_size
+            end = min(start + chunk_size, self.num_samples)
+            for sample_id in map(int, self.sample_ids[start: end]):
                 left, right, parent = self.results.get_path(sample_id)
                 self.tree_sequence_builder.add_path(
                     sample_id, left, right, parent, compress=self.path_compression)
                 site, derived_state = self.results.get_mutations(sample_id)
                 self.tree_sequence_builder.add_mutations(sample_id, site, derived_state)
-                progress_monitor.update()
-            progress_monitor.close()
+            self.results.clear()
+            self.tree_sequence_builder.freeze_indexes()
+
+        self.match_progress.close()
+
+        # logger.info("Inserting sample paths: {} edges in total".format(
+        #     self.results.total_edges))
+        # progress_monitor = self.progress_monitor.get("ms_paths", self.num_samples)
+        # for j in range(self.num_samples):
+        #     sample_id = int(self.sample_ids[j])
+        #     left, right, parent = self.results.get_path(sample_id)
+        #     self.tree_sequence_builder.add_path(
+        #         sample_id, left, right, parent, compress=self.path_compression)
+        #     site, derived_state = self.results.get_mutations(sample_id)
+        #     self.tree_sequence_builder.add_mutations(sample_id, site, derived_state)
+        #     progress_monitor.update()
+        # progress_monitor.close()
 
     def workaround_individuals_simplify(self, ts):
         """
