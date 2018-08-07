@@ -881,8 +881,12 @@ class SampleMatcher(Matcher):
         self.restore_tree_sequence_builder(ancestors_ts)
         self.ancestors_ts = ancestors_ts
         self.sample_ids = np.zeros(self.num_samples, dtype=np.int32)
+        # FIXME As a quick hack, give samples different times so that they can
+        # copy from each other if in different chunks.
+        t = 0
         for j in range(self.num_samples):
-            self.sample_ids[j] = self.tree_sequence_builder.add_node(0)
+            self.sample_ids[j] = self.tree_sequence_builder.add_node(t)
+            t -= 1
 
     def __process_sample(self, sample_id, haplotype, thread_index=0):
         self._find_path(sample_id, haplotype, 0, self.num_sites, thread_index)
@@ -954,10 +958,8 @@ class SampleMatcher(Matcher):
             else:
                 self.__match_samples_multi_threaded(iterator)
 
-            logger.info("Finished chunk {}", chunk)
-
-            logger.info("Inserting sample paths: {} edges in total".format(
-                self.results.total_edges))
+            logger.info("Chunk {}: inserting sample paths: {} edges in total".format(
+                chunk, self.results.total_edges))
             start = chunk * chunk_size
             end = min(start + chunk_size, self.num_samples)
             for sample_id in map(int, self.sample_ids[start: end]):

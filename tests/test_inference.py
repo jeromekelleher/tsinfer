@@ -397,10 +397,11 @@ class TestThreads(TsinferTestCase):
     def test_chunk_size(self):
         ts = msprime.simulate(15, mutation_rate=3, recombination_rate=2, random_seed=5)
         sample_data = tsinfer.SampleData.from_tree_sequence(ts)
-        ts1 = tsinfer.infer(sample_data, num_threads=0)
         ancestor_data = tsinfer.generate_ancestors(sample_data, compressor=None)
         ancestors_ts = tsinfer.match_ancestors(sample_data, ancestor_data)
         for chunk_size in [1, 3, 14, 15, 16, 2**32]:
+            ts1 = tsinfer.match_samples(
+                sample_data, ancestors_ts, chunk_size=chunk_size, num_threads=0)
             ts2 = tsinfer.match_samples(
                 sample_data, ancestors_ts, chunk_size=chunk_size, num_threads=3)
             self.assertTreeSequencesEqual(ts1, ts2)
@@ -411,19 +412,18 @@ class TestChunkSize(TsinferTestCase):
     Tests the sample matching chunk size.
     """
     def verify_equal(self, sample_data):
-        # We have to have path compression turned off as we'll get slightly
-        # different matches depending on how samples are chunked.
-        ts1 = tsinfer.infer(sample_data, path_compression=False)
+        ts1 = tsinfer.infer(sample_data)
         ancestor_data = tsinfer.generate_ancestors(sample_data, compressor=None)
         ancestors_ts = tsinfer.match_ancestors(
             sample_data, ancestor_data, path_compression=False)
         for chunk_size in [1, 3, 14, 15, 16, 2**32]:
-            # This fails even when we have no path compression because we can
-            # copy from ancestors.
             ts2 = tsinfer.match_samples(
                 sample_data, ancestors_ts, chunk_size=chunk_size,
-                path_compression=False, engine=tsinfer.PY_ENGINE)
-            self.assertTreeSequencesEqual(ts1, ts2)
+                path_compression=True)
+            # We can't really test any more than this because of the fact we can
+            # copy from other samples.
+            self.assertTrue(
+                np.array_equal(ts1.genotype_matrix(), ts2.genotype_matrix()))
 
     def test_simple_example(self):
         ts = msprime.simulate(15, mutation_rate=3, recombination_rate=2, random_seed=5)
@@ -434,6 +434,16 @@ class TestChunkSize(TsinferTestCase):
         n = 10
         m = 5
         G, positions = get_random_data_example(n, m)
+        sample_data = tsinfer.SampleData(sequence_length=m)
+        for genotypes, position in zip(G, positions):
+            sample_data.add_site(position, genotypes)
+        sample_data.finalise()
+        self.verify_equal(sample_data)
+
+    def test_large_random_data(self):
+        n = 50
+        m = 550
+        G, positions = get_random_data_example(n, m, seed=23)
         sample_data = tsinfer.SampleData(sequence_length=m)
         for genotypes, position in zip(G, positions):
             sample_data.add_site(position, genotypes)

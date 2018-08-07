@@ -130,6 +130,7 @@ out:
 int
 ancestor_matcher_free(ancestor_matcher_t *self)
 {
+    assert(self != NULL);
     tsi_safe_free(self->parent);
     tsi_safe_free(self->left_child);
     tsi_safe_free(self->right_child);
