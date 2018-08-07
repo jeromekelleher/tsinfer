@@ -212,7 +212,8 @@ def run_match_samples(args):
         sample_data, ancestors_trees, num_threads=args.num_threads,
         path_compression=not args.no_path_compression,
         simplify=not args.no_simplify,
-        progress_monitor=progress_monitor)
+        progress_monitor=progress_monitor,
+        chunk_size=args.chunk_size)
     logger.info("Writing output tree sequence to {}".format(output_trees))
     ts.dump(output_trees)
     summarise_usage()
@@ -364,6 +365,9 @@ def get_cli_parser():
     add_output_trees_argument(parser)
     add_num_threads_argument(parser)
     add_progress_argument(parser)
+    parser.add_argument(
+        "--chunk-size", type=int, default=None,
+        help="DOCUMENT ME")
     parser.set_defaults(runner=run_match_samples)
 
     parser = subparsers.add_parser(
