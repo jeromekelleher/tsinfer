@@ -119,25 +119,96 @@ def tsinfer_dev(
     ancestor_data = tsinfer.generate_ancestors(
         sample_data, engine=engine, num_threads=num_threads)
     ancestors_ts = tsinfer.match_ancestors(
-        sample_data, ancestor_data, engine=engine, path_compression=True,
-        extended_checks=True)
+        sample_data, ancestor_data, engine=engine,
+        path_compression=path_compression)
 
     ts = tsinfer.match_samples(sample_data, ancestors_ts,
-            path_compression=True, simplify=False, engine=engine,
-            extended_checks=True)
+            path_compression=path_compression, simplify=True, engine=engine)
 
-    for node in ts.nodes():
-        if tsinfer.is_synthetic(node.flags):
-            print("Synthetic node", node.id, node.time)
-            parent_edges = [edge for edge in ts.edges() if edge.parent == node.id]
-            child_edges = [edge for edge in ts.edges() if edge.child == node.id]
-            child_edges.sort(key=lambda e: e.left)
-            print("parent edges")
-            for edge in parent_edges:
-                print("\t", edge)
-            print("child edges")
-            for edge in child_edges:
-                print("\t", edge)
+    edges = sorted(ts.edges(), key=lambda x: (x.child, x.left))
+    last_edge = edges[0]
+    srb_map = collections.defaultdict(list)
+    for edge in edges[1:]:
+        if edge.child == last_edge.child and edge.left == last_edge.right:
+            key = edge.left, last_edge.parent, edge.parent
+            srb_map[key].append(edge.child)
+        last_edge = edge
+
+    srbs = []
+    for k, v in srb_map.items():
+        if len(v) > 1:
+            # print(k, "\t", v)
+            srbs.append(k)
+    srbs.sort()
+
+    def shared_recombinations():
+        right_trees = ts.trees()
+        _ = next(right_trees)
+        j = 0
+        for left_tree, right_tree in zip(ts.trees(), right_trees):
+            assert left_tree.interval[1] == right_tree.interval[0]
+            while j < len(srbs) and srbs[j][0] == left_tree.interval[1]:
+                x, pl, pr = srbs[j]
+                yield x, list(left_tree.samples(pl)), list(right_tree.samples(pr))
+                # print(x, pl, pr)
+                # print("\t", list(left_tree.samples(pl)))
+                # print("\t", list(right_tree.samples(pr)))
+                j += 1
+        assert j == len(srbs)
+        # Sentinel
+        yield ts.sequence_length, [], []
+
+    augmented_samples = tsinfer.SampleData()
+    position = sample_data.sites_position[:]
+    srb_markers = shared_recombinations()
+    x, left_samples, right_samples = next(srb_markers)
+    for j, genotypes in sample_data.genotypes():
+        # print(j, position[j], genotypes)
+        delta = 1e-6
+        if x == position[j]:
+            # print("MATCH")
+            a = np.zeros_like(genotypes)
+            a[left_samples] = 1
+            augmented_samples.add_site(position=x - delta, genotypes=a)
+            # print("Insert left:", a)
+            augmented_samples.add_site(position=x, genotypes=genotypes)
+            a = np.zeros_like(genotypes)
+            a[right_samples] = 1
+            # print("Insert right:", a)
+            augmented_samples.add_site(position=x + delta, genotypes=a)
+            x, left_samples, right_samples = next(srb_markers)
+            # TEMP - just to keep things simple.
+            assert x != position[j]
+        else:
+            augmented_samples.add_site(position=position[j], genotypes=genotypes)
+
+    augmented_samples.finalise()
+
+    final_ts = tsinfer.infer(augmented_samples)
+    print("nodes:", ts.num_nodes, final_ts.num_nodes, sep="\t")
+    print("edges:", ts.num_edges, final_ts.num_edges, sep="\t")
+    print("num_trees:", ts.num_trees, final_ts.num_trees, sep="\t")
+
+#     for tree in ts.trees():
+#         print(tree.draw(format="unicode"))
+#         break
+#     for tree in final_ts.trees():
+#         print(tree.draw(format="unicode"))
+#         break
+
+
+    # for node in ts.nodes():
+    #     if tsinfer.is_synthetic(node.flags):
+    #         print("Synthetic node", node.id, node.time)
+    #         parent_edges = [edge for edge in ts.edges() if edge.parent == node.id]
+    #         child_edges = [edge for edge in ts.edges() if edge.child == node.id]
+    #         child_edges.sort(key=lambda e: e.left)
+    #         print("parent edges")
+    #         for edge in parent_edges:
+    #             print("\t", edge)
+    #         print("child edges")
+    #         for edge in child_edges:
+    #             print("\t", edge)
 
 #     # output_ts = tsinfer.match_samples(subset_samples, ancestors_ts, engine=engine)
 #     output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
@@ -347,7 +418,8 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(20, 0.25, seed=4, num_threads=0, engine="C", recombination_rate=1e-8)
+    tsinfer_dev(50, 1.25, seed=4, num_threads=0, engine="C", recombination_rate=1e-8,
+            path_compression=True)
 
     # minimise_dev()
 
