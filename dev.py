@@ -25,6 +25,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 import tsinfer
+import tsinfer.eval_util as eval_util
 import msprime
 
 
@@ -106,15 +107,13 @@ def tsinfer_dev(
 
     # daiquiri.setup(level=log_level)
 
-    ts = msprime.simulate(
+    source_ts = msprime.simulate(
             n, Ne=10**4, length=L_megabases,
             recombination_rate=recombination_rate, mutation_rate=1e-8,
             random_seed=seed)
-    if debug:
-        print("num_sites = ", ts.num_sites)
-    assert ts.num_sites > 0
+    assert source_ts.num_sites > 0
 
-    sample_data = tsinfer.SampleData.from_tree_sequence(ts)
+    sample_data = tsinfer.SampleData.from_tree_sequence(source_ts)
 
     ancestor_data = tsinfer.generate_ancestors(
         sample_data, engine=engine, num_threads=num_threads)
@@ -158,43 +157,66 @@ def tsinfer_dev(
         # Sentinel
         yield ts.sequence_length, [], []
 
-    augmented_samples = tsinfer.SampleData()
+    augmented_samples = tsinfer.SampleData(sequence_length=sample_data.sequence_length)
     position = sample_data.sites_position[:]
     srb_markers = shared_recombinations()
     x, left_samples, right_samples = next(srb_markers)
+    delta = 1e-6
     for j, genotypes in sample_data.genotypes():
         # print(j, position[j], genotypes)
-        delta = 1e-6
-        if x == position[j]:
-            # print("MATCH")
+        synthetic = []
+        while x == position[j]:
+            synthetic.append((left_samples, right_samples))
+            x, left_samples, right_samples = next(srb_markers)
+        y = position[j] - len(synthetic) * delta
+        for left_samples, _ in synthetic:
             a = np.zeros_like(genotypes)
             a[left_samples] = 1
-            augmented_samples.add_site(position=x - delta, genotypes=a)
-            # print("Insert left:", a)
-            augmented_samples.add_site(position=x, genotypes=genotypes)
+            augmented_samples.add_site(position=y, genotypes=a)
+            y += delta
+        augmented_samples.add_site(position=position[j], genotypes=genotypes)
+        y = position[j] + delta
+        for _, right_samples_ in reversed(synthetic):
             a = np.zeros_like(genotypes)
             a[right_samples] = 1
-            # print("Insert right:", a)
-            augmented_samples.add_site(position=x + delta, genotypes=a)
-            x, left_samples, right_samples = next(srb_markers)
-            # TEMP - just to keep things simple.
-            assert x != position[j]
-        else:
-            augmented_samples.add_site(position=position[j], genotypes=genotypes)
+            augmented_samples.add_site(position=y, genotypes=a)
+            y += delta
 
     augmented_samples.finalise()
+    print("Sites", sample_data.num_sites)
+    print("Added", augmented_samples.num_sites - sample_data.num_sites, "augmented sites")
 
     final_ts = tsinfer.infer(augmented_samples)
-    print("nodes:", ts.num_nodes, final_ts.num_nodes, sep="\t")
-    print("edges:", ts.num_edges, final_ts.num_edges, sep="\t")
-    print("num_trees:", ts.num_trees, final_ts.num_trees, sep="\t")
+    print("nodes:", ts.num_nodes, final_ts.num_nodes, source_ts.num_nodes, sep="\t")
+    print("edges:", ts.num_edges, final_ts.num_edges, source_ts.num_edges, sep="\t")
+    print("trees:", ts.num_trees, final_ts.num_trees, source_ts.num_trees, sep="\t")
+    sys.stdout.flush()
 
-#     for tree in ts.trees():
-#         print(tree.draw(format="unicode"))
-#         break
-#     for tree in final_ts.trees():
-#         print(tree.draw(format="unicode"))
-#         break
+    breakpoints, kc_distance = eval_util.compare(source_ts, ts)
+    d = breakpoints[1:] - breakpoints[:-1]
+    d /= breakpoints[-1]
+    no_augment = np.sum(kc_distance * d)
+    breakpoints, kc_distance = eval_util.compare(final_ts, ts)
+    d = breakpoints[1:] - breakpoints[:-1]
+    d /= breakpoints[-1]
+    augment = np.sum(kc_distance * d)
+    print("kc   :", no_augment, augment)
+
+    # pos = ts.sequence_length / 2
+    # for tree in ts.trees():
+    #     if tree.interval[0] <= pos < tree.interval[1]:
+    #         break
+    # print(tree.draw(format="unicode"))
+
+    # for tree in final_ts.trees():
+    #     if tree.interval[0] <= pos < tree.interval[1]:
+    #         break
+    # print(tree.draw(format="unicode"))
+
+    # for tree in source_ts.trees():
+    #     if tree.interval[0] <= pos < tree.interval[1]:
+    #         break
+    # print(tree.draw(format="unicode"))
 
 
     # for node in ts.nodes():
@@ -418,7 +440,9 @@ if __name__ == "__main__":
     # for j in range(1, 100):
     #     tsinfer_dev(15, 0.5, seed=j, num_threads=0, engine="P", recombination_rate=1e-8)
     # copy_1kg()
-    tsinfer_dev(50, 1.25, seed=4, num_threads=0, engine="C", recombination_rate=1e-8,
+    # tsinfer_dev(105, 10.25, seed=4, num_threads=0, engine="C", recombination_rate=2e-8,
+    #         path_compression=True)
+    tsinfer_dev(5, 0.25, seed=4, num_threads=0, engine="C", recombination_rate=2e-8,
             path_compression=True)
 
     # minimise_dev()
