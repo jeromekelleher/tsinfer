@@ -144,6 +144,7 @@ def augment_sites(sample_data, ts, **kwargs):
     tables = ts.tables
     nodes = tables.nodes
     edges = tables.edges
+    print("Loaded", len(edges), "edges")
 
     # We're only interested in sample nodes for now.
     child_flags = nodes.flags[edges.child]
@@ -197,7 +198,7 @@ def augment_sites(sample_data, ts, **kwargs):
     augmented_samples = tsinfer.SampleData(
         sequence_length=sample_data.sequence_length, **kwargs)
     position = sample_data.sites_position[:]
-    for j, genotypes in sample_data.genotypes():
+    for j, genotypes in tqdm.tqdm(sample_data.genotypes(), total=sample_data.num_sites):
         x = position[j]
         if x in srbs:
             samples_list = srbs[x]
@@ -210,10 +211,13 @@ def augment_sites(sample_data, ts, **kwargs):
                 # print("\tAugmented site @ ", y)
                 a = np.zeros_like(genotypes)
                 a[samples] = 1
-                augmented_samples.add_site(position=y, genotypes=a)
+                augmented_samples.add_site(
+                    position=y, genotypes=a, metadata={"augmented": x})
                 y += delta
         augmented_samples.add_site(position=x, genotypes=genotypes)
     augmented_samples.finalise()
+    num_augmented = augmented_samples.num_sites - sample_data.num_sites
+    print("Finished. Added", num_augmented, "augmented sites")
     return augmented_samples
 
 def tsinfer_dev(
@@ -450,6 +454,13 @@ def run_build():
     ad = tsinfer.generate_ancestors(sample_data)
     print(ad)
 
+def run_augment():
+    sample_data = tsinfer.load(sys.argv[1])
+    tree_sequence = msprime.load(sys.argv[2])
+    output_filename = sys.argv[3]
+
+    augment_sites(sample_data, tree_sequence, path=output_filename)
+
 
 if __name__ == "__main__":
 
@@ -471,8 +482,10 @@ if __name__ == "__main__":
     # copy_1kg()
     # tsinfer_dev(105, 10.25, seed=4, num_threads=0, engine="C", recombination_rate=2e-8,
     #         path_compression=True)
-    tsinfer_dev(100, 5.1, seed=4, num_threads=0, engine="C", recombination_rate=1e-8,
-            path_compression=True)
+    # tsinfer_dev(100, 5.1, seed=4, num_threads=0, engine="C", recombination_rate=1e-8,
+    #         path_compression=True)
+
+    run_augment()
 
 
 #     for seed in range(1, 10000):
