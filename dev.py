@@ -118,7 +118,7 @@ def simple_augment_sites(sample_data, ts, **kwargs):
         sequence_length=sample_data.sequence_length, **kwargs)
     position = sample_data.sites_position[:]
     srb_iter = iter(srbs)
-    x, samples = next(srb_iter)
+    x, samples = next(srb_iter, (-1, None))
     for j, genotypes in sample_data.genotypes():
         # print(j, position[j], genotypes)
         inserted_genotypes = []
@@ -141,45 +141,80 @@ def simple_augment_sites(sample_data, ts, **kwargs):
     return augmented_samples
 
 def augment_sites(sample_data, ts, **kwargs):
+    tables = ts.tables
+    nodes = tables.nodes
+    edges = tables.edges
+
     # We're only interested in sample nodes for now.
-    flags = ts.tables.nodes.flags
-    is_sample = (flags & 1) != 0  # Only if bit 1 is set
-    print(is_sample)
+    child_flags = nodes.flags[edges.child]
+    is_sample = np.where((child_flags & 1) != 0)[0]  # Only if bit 1 is set
 
-    edges = ts.tables.edges
-    index = is_sample[edges.child]
-    print(index)
-    print(edges)
+    print("Examining", is_sample.shape[0], "sample edges")
 
-    left = edges.left
-    right = edges.right
-    parent = edges.parent
-    child = edges.child
+    left = edges.left[is_sample]
+    right = edges.right[is_sample]
+    parent = edges.parent[is_sample]
+    child = edges.child[is_sample]
 
+    # Sort by (child, left)
     order = np.lexsort([left, child])
-    print(order)
+    left = left[order]
+    right = right[order]
+    parent = parent[order]
+    child = child[order]
 
+    # print(left)
+    # print(right)
+    # print(left[1:])
+    # print(right[:-1])
+    # print(left[1:] == right[:-1])
 
-    edges = sorted(ts.edges(), key=lambda x: (x.child, x.left))
-    for j, edge in enumerate(edges):
-        assert left[order[j]] == edge.left
-        assert right[order[j]] == edge.right
-        assert child[order[j]] == edge.child
-        assert parent[order[j]] == edge.parent
+    indexes = np.where(np.logical_and(
+        child[1:] == child[:-1],
+        left[1:] == right[:-1]))[0]
+    assert np.all(child[indexes] == child[indexes + 1])
+    assert np.all(right[indexes] == left[indexes + 1])
 
+    print("Examining", indexes.shape[0], "candidate pairs")
 
-    last_edge = edges[0]
     srb_map = collections.defaultdict(list)
-    j = 1
-    for edge in edges[1:]:
-        if edge.child == last_edge.child and edge.left == last_edge.right:
-            if ts.node(edge.child).is_sample():
-                key = edge.left, last_edge.parent, edge.parent
-                srb_map[key].append(edge.child)
-        last_edge = edge
-        j += 1
+    for j in indexes:
+        key = left[j], parent[j], parent[j + 1]
+        srb_map[key].append(child[j])
+    print("Found", len(srb_map), "map shared breakpoints")
 
+    srbs = collections.defaultdict(list)
+    max_frequency = 0
+    for key, samples in srb_map.items():
+        max_frequency = max(max_frequency, len(samples))
+        if len(samples) > 1:
+            pos = key[0]
+            srbs[pos].append(np.array(samples, dtype=np.int32))
+    print("Split into", len(srbs), "separate positions; max_frequency=", max_frequency)
+    # Clear we're no longer using.
+    del srb_map, left, right, parent, child, order, tables, indexes
 
+    augmented_samples = tsinfer.SampleData(
+        sequence_length=sample_data.sequence_length, **kwargs)
+    position = sample_data.sites_position[:]
+    for j, genotypes in sample_data.genotypes():
+        x = position[j]
+        if x in srbs:
+            samples_list = srbs[x]
+            # Put the inserted genotypes before the current site.
+            assert j > 0
+            distance = x - position[j - 1]
+            delta = distance / (len(samples_list) + 1)
+            y = position[j - 1] + delta
+            for samples in samples_list:
+                # print("\tAugmented site @ ", y)
+                a = np.zeros_like(genotypes)
+                a[samples] = 1
+                augmented_samples.add_site(position=y, genotypes=a)
+                y += delta
+        augmented_samples.add_site(position=x, genotypes=genotypes)
+    augmented_samples.finalise()
+    return augmented_samples
 
 def tsinfer_dev(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
@@ -209,50 +244,11 @@ def tsinfer_dev(
     ts = tsinfer.match_samples(sample_data, ancestors_ts,
             path_compression=path_compression, simplify=True, engine=engine)
 
-    # augmented_samples = simple_augment_sites(sample_data, ts)
+    augmented_samples_s = simple_augment_sites(sample_data, ts)
     augmented_samples = augment_sites(sample_data, ts)
 
-#     edges = sorted(ts.edges(), key=lambda x: (x.child, x.left))
-#     last_edge = edges[0]
-#     srb_map = collections.defaultdict(list)
-#     for edge in edges[1:]:
-#         if edge.child == last_edge.child and edge.left == last_edge.right:
-#             if ts.node(edge.child).is_sample():
-#                 key = edge.left, last_edge.parent, edge.parent
-#                 srb_map[key].append(edge.child)
-#         last_edge = edge
+    assert augmented_samples.data_equal(augmented_samples)
 
-#     srbs = []
-#     for k, v in srb_map.items():
-#         if len(v) > 1:
-#             # print(k, "\t", v)
-#             srbs.append((k[0], v))
-#     srbs.sort()
-
-#     augmented_samples = tsinfer.SampleData(sequence_length=sample_data.sequence_length)
-#     position = sample_data.sites_position[:]
-#     srb_iter = iter(srbs)
-#     x, samples = next(srb_iter)
-#     for j, genotypes in sample_data.genotypes():
-#         # print(j, position[j], genotypes)
-#         inserted_genotypes = []
-#         while x == position[j]:
-#             a = np.zeros_like(genotypes)
-#             a[samples] = 1
-#             inserted_genotypes.append(a)
-#             x, samples = next(srb_iter, (-1, None))
-#         if len(inserted_genotypes) > 0:
-#             # Put the inserted genotypes before pos.
-#             distance = position[j] - position[j - 1]
-#             delta = distance / (len(inserted_genotypes) + 1)
-#             y = position[j - 1] + delta
-#             for inserted_genotype in inserted_genotypes:
-#                 # print("\tAugmented site @ ", y)
-#                 augmented_samples.add_site(position=y, genotypes=inserted_genotype)
-#                 y += delta
-#         augmented_samples.add_site(position=position[j], genotypes=genotypes)
-
-#     augmented_samples.finalise()
     print("Sites", sample_data.num_sites)
     print("Added", augmented_samples.num_sites - sample_data.num_sites, "augmented sites")
 
@@ -475,7 +471,7 @@ if __name__ == "__main__":
     # copy_1kg()
     # tsinfer_dev(105, 10.25, seed=4, num_threads=0, engine="C", recombination_rate=2e-8,
     #         path_compression=True)
-    tsinfer_dev(5, 0.1, seed=4, num_threads=0, engine="C", recombination_rate=1e-8,
+    tsinfer_dev(100, 5.1, seed=4, num_threads=0, engine="C", recombination_rate=1e-8,
             path_compression=True)
 
 
