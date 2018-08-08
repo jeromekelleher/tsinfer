@@ -184,14 +184,16 @@ def augment_sites(sample_data, ts, **kwargs):
         srb_map[key].append(child[j])
     print("Found", len(srb_map), "map shared breakpoints")
 
-    srbs = collections.defaultdict(list)
+    srbs = collections.defaultdict(set)
     max_frequency = 0
     for key, samples in srb_map.items():
         max_frequency = max(max_frequency, len(samples))
         if len(samples) > 1:
             pos = key[0]
-            srbs[pos].append(np.array(samples, dtype=np.int32))
+            srbs[pos].add(tuple(samples))
+    num_sites = np.array(list(map(len, srbs.values())))
     print("Split into", len(srbs), "separate positions; max_frequency=", max_frequency)
+    print("Total of", np.sum(num_sites), "new sites; ", np.mean(num_sites), "each")
     # Clear we're no longer using.
     del srb_map, left, right, parent, child, order, tables, indexes
 
@@ -207,13 +209,15 @@ def augment_sites(sample_data, ts, **kwargs):
             distance = x - position[j - 1]
             delta = distance / (len(samples_list) + 1)
             y = position[j - 1] + delta
+            a = np.zeros_like(genotypes)
             for samples in samples_list:
-                # print("\tAugmented site @ ", y)
-                a = np.zeros_like(genotypes)
+                samples = np.array(samples, dtype=np.uint32)
+                # print("\tAugmented site @ ", y, samples,
                 a[samples] = 1
                 augmented_samples.add_site(
                     position=y, genotypes=a, metadata={"augmented": x})
                 y += delta
+                a[samples] = 0
         augmented_samples.add_site(position=x, genotypes=genotypes)
     augmented_samples.finalise()
     num_augmented = augmented_samples.num_sites - sample_data.num_sites
