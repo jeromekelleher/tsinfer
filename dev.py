@@ -96,6 +96,91 @@ def generate_samples(ts, error_p):
     return S.T
 
 
+def simple_augment_sites(sample_data, ts, **kwargs):
+    edges = sorted(ts.edges(), key=lambda x: (x.child, x.left))
+    last_edge = edges[0]
+    srb_map = collections.defaultdict(list)
+    for edge in edges[1:]:
+        if edge.child == last_edge.child and edge.left == last_edge.right:
+            if ts.node(edge.child).is_sample():
+                key = edge.left, last_edge.parent, edge.parent
+                srb_map[key].append(edge.child)
+        last_edge = edge
+
+    srbs = []
+    for k, v in srb_map.items():
+        if len(v) > 1:
+            # print(k, "\t", v)
+            srbs.append((k[0], v))
+    srbs.sort()
+
+    augmented_samples = tsinfer.SampleData(
+        sequence_length=sample_data.sequence_length, **kwargs)
+    position = sample_data.sites_position[:]
+    srb_iter = iter(srbs)
+    x, samples = next(srb_iter)
+    for j, genotypes in sample_data.genotypes():
+        # print(j, position[j], genotypes)
+        inserted_genotypes = []
+        while x == position[j]:
+            a = np.zeros_like(genotypes)
+            a[samples] = 1
+            inserted_genotypes.append(a)
+            x, samples = next(srb_iter, (-1, None))
+        if len(inserted_genotypes) > 0:
+            # Put the inserted genotypes before pos.
+            distance = position[j] - position[j - 1]
+            delta = distance / (len(inserted_genotypes) + 1)
+            y = position[j - 1] + delta
+            for inserted_genotype in inserted_genotypes:
+                # print("\tAugmented site @ ", y)
+                augmented_samples.add_site(position=y, genotypes=inserted_genotype)
+                y += delta
+        augmented_samples.add_site(position=position[j], genotypes=genotypes)
+    augmented_samples.finalise()
+    return augmented_samples
+
+def augment_sites(sample_data, ts, **kwargs):
+    # We're only interested in sample nodes for now.
+    flags = ts.tables.nodes.flags
+    is_sample = (flags & 1) != 0  # Only if bit 1 is set
+    print(is_sample)
+
+    edges = ts.tables.edges
+    index = is_sample[edges.child]
+    print(index)
+    print(edges)
+
+    left = edges.left
+    right = edges.right
+    parent = edges.parent
+    child = edges.child
+
+    order = np.lexsort([left, child])
+    print(order)
+
+
+    edges = sorted(ts.edges(), key=lambda x: (x.child, x.left))
+    for j, edge in enumerate(edges):
+        assert left[order[j]] == edge.left
+        assert right[order[j]] == edge.right
+        assert child[order[j]] == edge.child
+        assert parent[order[j]] == edge.parent
+
+
+    last_edge = edges[0]
+    srb_map = collections.defaultdict(list)
+    j = 1
+    for edge in edges[1:]:
+        if edge.child == last_edge.child and edge.left == last_edge.right:
+            if ts.node(edge.child).is_sample():
+                key = edge.left, last_edge.parent, edge.parent
+                srb_map[key].append(edge.child)
+        last_edge = edge
+        j += 1
+
+
+
 def tsinfer_dev(
         n, L, seed, num_threads=1, recombination_rate=1e-8,
         error_rate=0, engine="C", log_level="WARNING",
@@ -124,65 +209,50 @@ def tsinfer_dev(
     ts = tsinfer.match_samples(sample_data, ancestors_ts,
             path_compression=path_compression, simplify=True, engine=engine)
 
-    edges = sorted(ts.edges(), key=lambda x: (x.child, x.left))
-    last_edge = edges[0]
-    srb_map = collections.defaultdict(list)
-    for edge in edges[1:]:
-        if edge.child == last_edge.child and edge.left == last_edge.right:
-            key = edge.left, last_edge.parent, edge.parent
-            srb_map[key].append(edge.child)
-        last_edge = edge
+    # augmented_samples = simple_augment_sites(sample_data, ts)
+    augmented_samples = augment_sites(sample_data, ts)
 
-    srbs = []
-    for k, v in srb_map.items():
-        if len(v) > 1:
-            # print(k, "\t", v)
-            srbs.append(k)
-    srbs.sort()
+#     edges = sorted(ts.edges(), key=lambda x: (x.child, x.left))
+#     last_edge = edges[0]
+#     srb_map = collections.defaultdict(list)
+#     for edge in edges[1:]:
+#         if edge.child == last_edge.child and edge.left == last_edge.right:
+#             if ts.node(edge.child).is_sample():
+#                 key = edge.left, last_edge.parent, edge.parent
+#                 srb_map[key].append(edge.child)
+#         last_edge = edge
 
-    def shared_recombinations():
-        right_trees = ts.trees()
-        _ = next(right_trees)
-        j = 0
-        for left_tree, right_tree in zip(ts.trees(), right_trees):
-            assert left_tree.interval[1] == right_tree.interval[0]
-            while j < len(srbs) and srbs[j][0] == left_tree.interval[1]:
-                x, pl, pr = srbs[j]
-                yield x, list(left_tree.samples(pl)), list(right_tree.samples(pr))
-                # print(x, pl, pr)
-                # print("\t", list(left_tree.samples(pl)))
-                # print("\t", list(right_tree.samples(pr)))
-                j += 1
-        assert j == len(srbs)
-        # Sentinel
-        yield ts.sequence_length, [], []
+#     srbs = []
+#     for k, v in srb_map.items():
+#         if len(v) > 1:
+#             # print(k, "\t", v)
+#             srbs.append((k[0], v))
+#     srbs.sort()
 
-    augmented_samples = tsinfer.SampleData(sequence_length=sample_data.sequence_length)
-    position = sample_data.sites_position[:]
-    srb_markers = shared_recombinations()
-    x, left_samples, right_samples = next(srb_markers)
-    delta = 1e-6
-    for j, genotypes in sample_data.genotypes():
-        # print(j, position[j], genotypes)
-        synthetic = []
-        while x == position[j]:
-            synthetic.append((left_samples, right_samples))
-            x, left_samples, right_samples = next(srb_markers)
-        y = position[j] - len(synthetic) * delta
-        for left_samples, _ in synthetic:
-            a = np.zeros_like(genotypes)
-            a[left_samples] = 1
-            augmented_samples.add_site(position=y, genotypes=a)
-            y += delta
-        augmented_samples.add_site(position=position[j], genotypes=genotypes)
-        y = position[j] + delta
-        for _, right_samples_ in reversed(synthetic):
-            a = np.zeros_like(genotypes)
-            a[right_samples] = 1
-            augmented_samples.add_site(position=y, genotypes=a)
-            y += delta
+#     augmented_samples = tsinfer.SampleData(sequence_length=sample_data.sequence_length)
+#     position = sample_data.sites_position[:]
+#     srb_iter = iter(srbs)
+#     x, samples = next(srb_iter)
+#     for j, genotypes in sample_data.genotypes():
+#         # print(j, position[j], genotypes)
+#         inserted_genotypes = []
+#         while x == position[j]:
+#             a = np.zeros_like(genotypes)
+#             a[samples] = 1
+#             inserted_genotypes.append(a)
+#             x, samples = next(srb_iter, (-1, None))
+#         if len(inserted_genotypes) > 0:
+#             # Put the inserted genotypes before pos.
+#             distance = position[j] - position[j - 1]
+#             delta = distance / (len(inserted_genotypes) + 1)
+#             y = position[j - 1] + delta
+#             for inserted_genotype in inserted_genotypes:
+#                 # print("\tAugmented site @ ", y)
+#                 augmented_samples.add_site(position=y, genotypes=inserted_genotype)
+#                 y += delta
+#         augmented_samples.add_site(position=position[j], genotypes=genotypes)
 
-    augmented_samples.finalise()
+#     augmented_samples.finalise()
     print("Sites", sample_data.num_sites)
     print("Added", augmented_samples.num_sites - sample_data.num_sites, "augmented sites")
 
@@ -192,49 +262,32 @@ def tsinfer_dev(
     print("trees:", ts.num_trees, final_ts.num_trees, source_ts.num_trees, sep="\t")
     sys.stdout.flush()
 
-    breakpoints, kc_distance = eval_util.compare(source_ts, ts)
+    breakpoints, kc_distance = eval_util.compare(ts, source_ts)
     d = breakpoints[1:] - breakpoints[:-1]
     d /= breakpoints[-1]
     no_augment = np.sum(kc_distance * d)
-    breakpoints, kc_distance = eval_util.compare(final_ts, ts)
+    breakpoints, kc_distance = eval_util.compare(final_ts, source_ts)
     d = breakpoints[1:] - breakpoints[:-1]
     d /= breakpoints[-1]
     augment = np.sum(kc_distance * d)
     print("kc   :", no_augment, augment)
 
-    # pos = ts.sequence_length / 2
-    # for tree in ts.trees():
-    #     if tree.interval[0] <= pos < tree.interval[1]:
-    #         break
-    # print(tree.draw(format="unicode"))
+#     # pos = ts.sequence_length / 8
+#     pos = 0.001
+#     for tree in ts.trees():
+#         if tree.interval[0] <= pos < tree.interval[1]:
+#             break
+#     print(tree.draw(format="unicode"))
 
-    # for tree in final_ts.trees():
-    #     if tree.interval[0] <= pos < tree.interval[1]:
-    #         break
-    # print(tree.draw(format="unicode"))
+#     for tree in final_ts.trees():
+#         if tree.interval[0] <= pos < tree.interval[1]:
+#             break
+#     print(tree.draw(format="unicode"))
 
-    # for tree in source_ts.trees():
-    #     if tree.interval[0] <= pos < tree.interval[1]:
-    #         break
-    # print(tree.draw(format="unicode"))
-
-
-    # for node in ts.nodes():
-    #     if tsinfer.is_synthetic(node.flags):
-    #         print("Synthetic node", node.id, node.time)
-    #         parent_edges = [edge for edge in ts.edges() if edge.parent == node.id]
-    #         child_edges = [edge for edge in ts.edges() if edge.child == node.id]
-    #         child_edges.sort(key=lambda e: e.left)
-    #         print("parent edges")
-    #         for edge in parent_edges:
-    #             print("\t", edge)
-    #         print("child edges")
-    #         for edge in child_edges:
-    #             print("\t", edge)
-
-#     # output_ts = tsinfer.match_samples(subset_samples, ancestors_ts, engine=engine)
-#     output_ts = tsinfer.match_samples(sample_data, ancestors_ts, engine=engine)
-#     # dump_provenance(output_ts)
+#     for tree in source_ts.trees():
+#         if tree.interval[0] <= pos < tree.interval[1]:
+#             break
+#     print(tree.draw(format="unicode"))
 
 
 def dump_provenance(ts):
@@ -395,26 +448,6 @@ def minimise(ts):
     #     print(tree.draw(format="unicode"))
 
 
-
-
-
-def minimise_dev():
-    ts = msprime.simulate(5, mutation_rate=1, recombination_rate=2, random_seed=3)
-    # ts = msprime.load(sys.argv[1])
-
-    position = ts.tables.sites.position[::2]
-    subset_ts = subset_sites(ts, position)
-    print("Got subset")
-
-    ts_new = tsinfer.minimise(subset_ts)
-    for tree in ts_new.trees():
-        print("TREE:", tree.interval)
-        print(tree.draw(format="unicode"))
-    # print(ts_new.tables)
-    print("done")
-    other = minimise(subset_ts)
-
-
 def run_build():
 
     sample_data = tsinfer.load(sys.argv[1])
@@ -442,10 +475,9 @@ if __name__ == "__main__":
     # copy_1kg()
     # tsinfer_dev(105, 10.25, seed=4, num_threads=0, engine="C", recombination_rate=2e-8,
     #         path_compression=True)
-    tsinfer_dev(5, 0.25, seed=4, num_threads=0, engine="C", recombination_rate=2e-8,
+    tsinfer_dev(5, 0.1, seed=4, num_threads=0, engine="C", recombination_rate=1e-8,
             path_compression=True)
 
-    # minimise_dev()
 
 #     for seed in range(1, 10000):
 #         print(seed)
