@@ -2358,6 +2358,7 @@ class TestAlgorithmResults(unittest.TestCase):
         self.verify_single_recombination_position([0.0, 0.9, 2.0], G, 1)
 
 
+@unittest.skip("Missing data not yet implemented")
 class TestMissingDataImputed(unittest.TestCase):
     """
     Test that sites with tskit.MISSING_DATA are imputed, using both the PY and C engines

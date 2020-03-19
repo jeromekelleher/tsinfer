@@ -1272,6 +1272,7 @@ class SampleData(DataContainer):
             # Don't modify the input parameter
             alleles = list(alleles)
         n_alleles = len(alleles)
+        non_missing = genotypes >= 0
         if len(set(alleles)) != n_alleles:
             raise ValueError("Alleles must be distinct")
         if np.any(genotypes == tskit.MISSING_DATA) and alleles[-1] is not None:
