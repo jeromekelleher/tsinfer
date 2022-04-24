@@ -487,6 +487,7 @@ def make_ancestors_ts(samples, ts, remove_leaves=False):
     # We could also set the time to UNKNOWN_TIME, this is a bit easier.
     tables.mutations.time += 1
 
+    print(minimised.draw_text())
     trees = minimised.trees()
     tree = next(trees)
     left = 0
