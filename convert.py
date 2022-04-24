@@ -88,9 +88,11 @@ def convert_vcf():
 
 
 def naive_inference():
-    sd = tsinfer.load("/home/jk/work/covid-tsinfer-experiment/vcf/merged.samples")
+    sd = tsinfer.load("merged.samples")
     time = sd.individuals_time[:]
+
     present_zero = np.max(time) - time
+
     with sd.copy() as sd_copy:
         sd_copy.individuals_time[:] = present_zero
 
@@ -102,34 +104,33 @@ def naive_inference():
     ancestors_ts = tsinfer.match_ancestors(sd_copy, ad)
     # print(ancestors_ts)
 
-    for t in np.unique(present_zero):
-        # print(np.sum(present_zero == t))
-        ids = list(np.where(present_zero == t)[0])
-        if len(ids) > 1:
-            print("t = ", t, ":", len(ids))
-            sdt = sd_copy.subset(individuals=ids)
-            # print(sdt)
-            ts = tsinfer.match_samples(
-                sdt,
-                ancestors_ts,
-                recombination_rate=1e-20,
-                mismatch_ratio=1e10,
-                num_threads=8,
-                simplify=False,
-            )
-            print(ts)
-            # print(ts.draw_text())
-            # print(ts.tables.nodes)
-            ts.dump(f"t={t}.trees")
-            tables = ts.dump_tables()
-            tables.nodes.time += 1
-            tables.nodes.population = np.zeros_like(tables.nodes.population) - 1
-            tables.populations.clear()
-            # for tree in ts.trees():
-            #     print("roots = ", tree.num_roots)
+    pm = tsinfer.inference._get_progress_monitor(
+        True, generate_ancestors=False, match_ancestors=False, match_samples=True,
+    )
 
-            # ancestors_ts = tsinfer.eval_util.make_ancestors_ts(sd, ts)
-            ancestors_ts = tables.tree_sequence()
+    for t in np.unique(present_zero)[::-1]:
+        ids = list(np.where(present_zero == t)[0])
+        print("t = ", t, ":", len(ids))
+        sdt = sd_copy.subset(individuals=ids)
+        # print(sdt)
+        ts = tsinfer.match_samples(
+            sdt,
+            ancestors_ts,
+            recombination_rate=1e-10,
+            mismatch_ratio=1e5,
+            num_threads=20,
+            simplify=False,
+            progress_monitor=True
+        )
+        print(ts)
+        # print(ts.draw_text())
+        # print(ts.tables.nodes)
+        ts.dump(f"tmp__NOBACKUP__/covid/recomb/t={t}.trees")
+        tables = ts.dump_tables()
+        tables.nodes.time += 1
+        tables.nodes.population = np.zeros_like(tables.nodes.population) - 1
+        tables.populations.clear()
+        ancestors_ts = tables.tree_sequence()
 
 
 def fixup_samples_metadata(ts):
@@ -159,7 +160,7 @@ if __name__ == "__main__":
 
     # print(df)
     # convert_vcf()
-    # naive_inference()
+    naive_inference()
 
-    ts = fixup_samples_metadata(tskit.load(sys.argv[1]))
-    ts.dump("covid.trees")
+    # ts = fixup_samples_metadata(tskit.load(sys.argv[1]))
+    # ts.dump("covid.trees")
