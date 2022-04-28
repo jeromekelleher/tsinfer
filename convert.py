@@ -121,7 +121,7 @@ def naive_inference():
             mismatch_ratio=1e10,
             num_threads=40,
             simplify=False,
-            progress_monitor=True
+            progress_monitor=True,
         )
         print(ts)
         # print(ts.draw_text())
@@ -156,6 +156,7 @@ def fixup_samples_metadata(ts):
     # print(tables.nodes)
     # tables.popaltions.clear()
 
+
 def trim_data():
     source = tsinfer.load("merged.samples")
     print(source)
@@ -171,6 +172,51 @@ def trim_data():
     source.subset(sites=keep_sites, path="merged-trimmed.samples", num_flush_threads=8)
 
 
+def verify():
+    sd = tsinfer.load("merged-trimmed.samples")
+    ts = tskit.load("covid-norecomb-small-indels.trees")
+    ts_node_map = {}
+    for j, sample in enumerate(ts.samples()):
+        node = ts.node(sample)
+        ts_node_map[node.metadata["name"]] = j
+
+    perm = np.zeros(ts.num_samples, dtype=int)
+    for j, sd_ind in enumerate(sd.individuals()):
+        perm[j] = ts_node_map[sd_ind.metadata["name"]]
+
+    assert ts.num_sites == sd.num_sites
+    assert ts.num_samples == sd.num_samples
+    pbar = tqdm.tqdm(total=ts.num_sites)
+    different_alleles = 0
+    for ts_var, sd_var in zip(ts.variants(), sd.variants()):
+        # print(perm)
+        # print(ts_var.alleles)
+        # print(sd_var.alleles)
+        assert sd_var.genotypes.shape == ts_var.genotypes.shape
+        # Not all alleles are used, so may not be in the ts output.
+        # assert len(sd_var.alleles) == len(ts_var.alleles)
+        if ts_var.alleles == sd_var.alleles:
+            assert np.all(sd_var.genotypes == ts_var.genotypes[perm])
+        else:
+            # Do this the slow way.
+            for sd_g, ts_g in zip(sd_var.genotypes, ts_var.genotypes[perm]):
+                assert sd_var.alleles[sd_g] == ts_var.alleles[ts_g]
+            different_alleles += 1
+
+            # print("different alleles")
+        # print
+        # break
+        pbar.update()
+    pbar.close()
+
+    fraction = different_alleles / ts.num_sites
+    print(f"Different alleles at {fraction:.2f} of sites")
+
+    # print(ts_node_map)
+
+    # print(ts.node(2))
+    # print(sd.individual(0))
+
 
 if __name__ == "__main__":
 
@@ -178,6 +224,7 @@ if __name__ == "__main__":
     # convert_vcf()
     # naive_inference()
 
-    ts = fixup_samples_metadata(tskit.load(sys.argv[1]))
-    ts.dump(sys.argv[2])
+    # ts = fixup_samples_metadata(tskit.load(sys.argv[1]))
+    # ts.dump(sys.argv[2])
     # trim_data()
+    verify()
