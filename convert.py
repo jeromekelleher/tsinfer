@@ -88,7 +88,7 @@ def convert_vcf():
 
 
 def naive_inference():
-    sd = tsinfer.load("merged.samples")
+    sd = tsinfer.load("merged-trimmed.samples")
     time = sd.individuals_time[:]
 
     present_zero = np.max(time) - time
@@ -97,6 +97,7 @@ def naive_inference():
         sd_copy.individuals_time[:] = present_zero
 
     a = np.zeros(sd.num_sites, dtype=int)
+    # FIXME: this second ancestor shouldn't be necessary.
     with tsinfer.AncestorData(sd_copy) as ad:
         ad.add_ancestor(start=0, end=ad.num_sites, time=2, focal_sites=[], haplotype=a)
         ad.add_ancestor(start=0, end=ad.num_sites, time=1, focal_sites=[], haplotype=a)
@@ -116,16 +117,16 @@ def naive_inference():
         ts = tsinfer.match_samples(
             sdt,
             ancestors_ts,
-            recombination_rate=1e-10,
-            mismatch_ratio=1e5,
-            num_threads=20,
+            recombination_rate=1e-20,
+            mismatch_ratio=1e10,
+            num_threads=40,
             simplify=False,
             progress_monitor=True
         )
         print(ts)
         # print(ts.draw_text())
         # print(ts.tables.nodes)
-        ts.dump(f"tmp__NOBACKUP__/covid/recomb/t={t}.trees")
+        ts.dump(f"tmp__NOBACKUP__/covid/norecomb/t={t}.trees")
         tables = ts.dump_tables()
         tables.nodes.time += 1
         tables.nodes.population = np.zeros_like(tables.nodes.population) - 1
@@ -155,12 +156,28 @@ def fixup_samples_metadata(ts):
     # print(tables.nodes)
     # tables.popaltions.clear()
 
+def trim_data():
+    source = tsinfer.load("merged.samples")
+    print(source)
+
+    keep_sites = []
+    for variant in source.variants():
+        if 100 < variant.site.position < 29000:
+            is_snp = all(len(allele) < 5 for allele in variant.alleles)
+            if is_snp:
+                keep_sites.append(variant.site.id)
+
+    print("running subset", len(keep_sites))
+    source.subset(sites=keep_sites, path="merged-trimmed.samples", num_flush_threads=8)
+
+
 
 if __name__ == "__main__":
 
     # print(df)
     # convert_vcf()
-    naive_inference()
+    # naive_inference()
 
-    # ts = fixup_samples_metadata(tskit.load(sys.argv[1]))
-    # ts.dump("covid.trees")
+    ts = fixup_samples_metadata(tskit.load(sys.argv[1]))
+    ts.dump(sys.argv[2])
+    # trim_data()
