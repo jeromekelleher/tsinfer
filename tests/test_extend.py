@@ -65,12 +65,12 @@ class TestExtend:
     @pytest.mark.parametrize("num_sites", [1, 4, 10, 100])
     def test_random_data(self, num_generations, samples_per_generation, num_sites):
         rng = np.random.default_rng(42)
-
+        num_samples = num_generations * samples_per_generation
         with tsinfer.SampleData(sequence_length=num_sites) as sd:
+            for j in range(num_samples):
+                sd.add_individual(ploidy=1, metadata={"ind_id": j})
             for j in range(num_sites):
-                genotypes = rng.integers(
-                    0, 4, size=num_generations * samples_per_generation
-                )
+                genotypes = rng.integers(0, 4, size=num_samples)
                 sd.add_site(j, genotypes, alleles="ACGT")
 
         extender = tsinfer.SequentialExtender(sd)
@@ -86,6 +86,17 @@ class TestExtend:
         for var1, var2 in zip(ts.variants(alleles=("A", "C", "G", "T")), sd.variants()):
             assert var1.alleles == var2.alleles
             assert np.all(var1.genotypes == var2.genotypes)
+        for j, u in enumerate(ts.samples()):
+            assert ts.node(u).metadata == {"ind_id": j}
+
+    def test_single_sample_metadata(self):
+        with tsinfer.SampleData(sequence_length=1) as sd:
+            sd.add_individual(ploidy=1, metadata={"x": 1})
+            sd.add_site(0, [1])
+        extender = tsinfer.SequentialExtender(sd)
+        ts = extender.extend([0])
+        assert_variants_equal(ts, sd)
+        assert ts.node(ts.samples()[0]).metadata == {"x": 1}
 
 
 class TestExtendPathCompression:

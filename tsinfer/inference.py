@@ -1650,7 +1650,7 @@ class SampleMatcher(Matcher):
 
         self._match_samples(sample_indexes)
 
-    def extend(self, samples, known_haplotypes):
+    def extend(self, samples, known_haplotypes, node_metadata):
         """
         Runs the "extend" operation by matching for an explar sequence
         from each of the distinct categories.
@@ -1692,10 +1692,16 @@ class SampleMatcher(Matcher):
         # num_pc_ancestors = count_pc_ancestors(flags)
 
         # First add the sample nodes for *all* the input samples
-        # for sd_id in samples:
-        for _ in samples:
+        for sd_id in samples:
+
+            #     # ("individuals/metadata_schema", self.individuals_metadata_schema),
+            #     # ("individuals/metadata", zarr_summary(self.individuals_metadata)),
+            # metadata = self.sample_data.individuals_metadata[samples[0]: samples[:-1]]
+            # for md in metadata:
             # node_id = self.sample_id_map[sd_id]
-            final_node_id = tables.nodes.add_row(flags=1, time=0)
+            final_node_id = tables.nodes.add_row(
+                flags=tskit.NODE_IS_SAMPLE, time=0, metadata=node_metadata[sd_id]
+            )
 
         # Then add in the exemplar nodes that will become parents of the
         # actual samples
@@ -2064,11 +2070,14 @@ class SequentialExtender:
         tables = tskit.TableCollection(sample_data.sequence_length)
         for site in sample_data.sites():
             tables.sites.add_row(site.position, site.ancestral_state)
+        tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
         for t in [2, 1]:
             tables.nodes.add_row(time=t)
         tables.edges.add_row(0, sample_data.sequence_length, 0, 1)
         self.ancestors_ts = tables.tree_sequence()
         self.haplotypes = set()
+        assert self.sample_data.num_individuals == self.sample_data.num_samples
+        self.node_metadata = sample_data.individuals_metadata[:]
 
     def _update_ancestors_ts(self, ts):
         # Convert the input into an ancestors_ts
@@ -2083,7 +2092,9 @@ class SequentialExtender:
             allow_multiallele=True,
             **kwargs,
         )
-        ts, haplotypes = manager.extend(np.array(samples), self.haplotypes)
+        ts, haplotypes = manager.extend(
+            np.array(samples), self.haplotypes, self.node_metadata
+        )
         self.haplotypes |= haplotypes
         self._update_ancestors_ts(ts)
         return ts
