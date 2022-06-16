@@ -1708,7 +1708,7 @@ class SampleMatcher(Matcher):
         for key, sd_ids in distinct.items():
             if len(sd_ids) > 1 and key not in known_haplotypes:
                 final_node_id = tables.nodes.add_row(
-                    flags=constants.NODE_IS_IDENTICAL_SAMPLE_ANCESTOR, time=1 / 128,
+                    flags=constants.NODE_IS_IDENTICAL_SAMPLE_ANCESTOR, time=1 / 2,
                 )
                 assert final_node_id == distinct_parents[key]
                 for sd_id in sd_ids:
