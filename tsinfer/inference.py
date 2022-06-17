@@ -1693,12 +1693,6 @@ class SampleMatcher(Matcher):
 
         # First add the sample nodes for *all* the input samples
         for sd_id in samples:
-
-            #     # ("individuals/metadata_schema", self.individuals_metadata_schema),
-            #     # ("individuals/metadata", zarr_summary(self.individuals_metadata)),
-            # metadata = self.sample_data.individuals_metadata[samples[0]: samples[:-1]]
-            # for md in metadata:
-            # node_id = self.sample_id_map[sd_id]
             final_node_id = tables.nodes.add_row(
                 flags=tskit.NODE_IS_SAMPLE, time=0, metadata=node_metadata[sd_id]
             )
@@ -1708,7 +1702,8 @@ class SampleMatcher(Matcher):
         for key, sd_ids in distinct.items():
             if len(sd_ids) > 1 and key not in known_haplotypes:
                 final_node_id = tables.nodes.add_row(
-                    flags=constants.NODE_IS_IDENTICAL_SAMPLE_ANCESTOR, time=1 / 2,
+                    flags=constants.NODE_IS_IDENTICAL_SAMPLE_ANCESTOR,
+                    time=1 / 2,
                 )
                 assert final_node_id == distinct_parents[key]
                 for sd_id in sd_ids:
@@ -2075,7 +2070,11 @@ class SequentialExtender:
             tables.nodes.add_row(time=t)
         tables.edges.add_row(0, sample_data.sequence_length, 0, 1)
         self.ancestors_ts = tables.tree_sequence()
-        self.haplotypes = set()
+        # Seed the known_haplotypes with the all-zeros haplotypes so that
+        # we don't create a spurious node for it in the first generation.
+        root_haplotype = next(sample_data.haplotypes())[1].copy()
+        root_haplotype[:] = 0
+        self.haplotypes = {root_haplotype.tobytes()}
         assert self.sample_data.num_individuals == self.sample_data.num_samples
         self.node_metadata = sample_data.individuals_metadata[:]
 

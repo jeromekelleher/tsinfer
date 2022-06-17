@@ -98,6 +98,42 @@ class TestExtend:
         assert_variants_equal(ts, sd)
         assert ts.node(ts.samples()[0]).metadata == {"x": 1}
 
+    @pytest.mark.parametrize("num_generations", range(1, 5))
+    def test_stick(self, num_generations):
+        # We have a stick tree where the single mutation for a given site
+        # happens on one branch and they accumulate over time.
+        H = np.zeros((num_generations, num_generations), dtype=int)
+        a = np.zeros(num_generations, dtype=int)
+        for j in range(num_generations):
+            a[j] = 1
+            H[j] = a
+        with tsinfer.SampleData(sequence_length=num_generations) as sd:
+            for j in range(num_generations):
+                sd.add_site(j, H[:, j])
+        extender = tsinfer.SequentialExtender(sd)
+        for j in range(num_generations):
+            ts = extender.extend([j])
+            assert ts.num_samples == j + 1
+        assert ts.num_mutations == num_generations
+        assert ts.num_edges == num_generations + 1
+
+    @pytest.mark.parametrize("num_generations", range(1, 5))
+    def test_all_zeros(self, num_generations):
+        # all the haplotypes are 0s and should just copy directly from
+        # the same root.
+        a = np.zeros(2 * num_generations, dtype=int)
+        with tsinfer.SampleData(sequence_length=num_generations) as sd:
+            sd.add_site(0, a)
+        extender = tsinfer.SequentialExtender(sd)
+        for j in range(num_generations):
+            ts = extender.extend([2 * j, 2 * j + 1])
+            # assert ts.num_samples == 2 * j + 1
+        assert ts.num_mutations == 0
+        assert ts.num_trees == 1
+        tree = ts.first()
+        parents = {tree.parent(u) for u in ts.samples()}
+        assert len(parents) == 1
+
 
 class TestExtendPathCompression:
     def example(self):
@@ -194,9 +230,10 @@ class TestExtendIdenticalSequences:
         assert_variants_equal(ts, sd)
 
     def test_two_haplotypes_one_generation(self):
+        alleles = ("A", "C", "G")
         with tsinfer.SampleData(sequence_length=2) as sd:
-            sd.add_site(0, [0, 0, 1, 1])
-            sd.add_site(1, [0, 0, 1, 1])
+            sd.add_site(0, [1, 1, 2, 2], alleles=alleles)
+            sd.add_site(1, [1, 1, 2, 2], alleles=alleles)
         extender = tsinfer.SequentialExtender(sd)
         ts = extender.extend([0, 1, 2, 3])
 
@@ -218,13 +255,13 @@ class TestExtendIdenticalSequences:
         assert_variants_equal(ts, sd)
 
     def test_two_haplotypes_two_generations(self):
+        alleles = ("A", "C", "G")
         with tsinfer.SampleData(sequence_length=2) as sd:
-            sd.add_site(0, [0, 0, 1, 1, 1, 1])
-            sd.add_site(1, [0, 0, 1, 1, 1, 1])
+            sd.add_site(0, [1, 1, 2, 2, 2, 2], alleles=alleles)
+            sd.add_site(1, [1, 1, 2, 2, 2, 2], alleles=alleles)
         extender = tsinfer.SequentialExtender(sd)
         ts = extender.extend([0, 1, 2, 3])
         ts = extender.extend([4, 5])
-
         # We correctly see that there was a pre-existing exact match for
         # this haplotype and match against it.
         assert_variants_equal(ts, sd)
