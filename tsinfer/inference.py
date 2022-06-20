@@ -1756,6 +1756,10 @@ class SampleMatcher(Matcher):
             f"Extended for {len(samples)} samples ({len(exemplars)} distinct) and "
             f"{new_mutations} new mutations."
         )
+        tables.provenances.clear()
+        record = provenance.get_provenance_dict(command="extend")
+        tables.provenances.add_row(record=json.dumps(record))
+
         return tables.tree_sequence(), set(distinct.keys())
 
     def finalise(self, simplify, stabilise_node_ordering):

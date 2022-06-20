@@ -134,6 +134,16 @@ class TestExtend:
         parents = {tree.parent(u) for u in ts.samples()}
         assert len(parents) == 1
 
+    @pytest.mark.parametrize("num_generations", range(1, 5))
+    def test_provenance(self, num_generations):
+        a = np.zeros(num_generations, dtype=int)
+        with tsinfer.SampleData(sequence_length=num_generations) as sd:
+            sd.add_site(0, a)
+        extender = tsinfer.SequentialExtender(sd)
+        for j in range(num_generations):
+            ts = extender.extend([j])
+            assert ts.num_provenances == 1
+
 
 class TestExtendPathCompression:
     def example(self):
