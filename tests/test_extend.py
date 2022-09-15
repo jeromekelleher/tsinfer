@@ -37,6 +37,26 @@ class TestExtend:
         assert ts.num_samples == 2 * num_samples
         assert np.all(ts.genotype_matrix() == 1)
 
+    @pytest.mark.parametrize("num_epochs", range(1, 5))
+    def test_single_binary_haplotype_extra_site_per_epoch(self, num_epochs):
+        ts = None
+        G = np.zeros((num_epochs, num_epochs), dtype=int)
+        for epoch in range(num_epochs):
+            with tsinfer.SampleData(sequence_length=100) as sd:
+                for j in range(epoch + 1):
+                    sd.add_site(j, [1], alleles=("0", "1"))
+                    G[j, epoch] = 1
+            assert sd.num_sites == epoch + 1
+            extender = tsinfer.SequentialExtender(sd, ancestors_ts=ts)
+            ts = extender.extend([0])
+
+        assert ts.num_mutations == num_epochs
+        assert ts.num_sites == num_epochs
+        # This should be a line tree
+        assert ts.num_nodes == num_epochs + 2
+        assert ts.num_edges == num_epochs + 1
+        assert np.array_equal(G, ts.genotype_matrix())
+
     @pytest.mark.parametrize("k", range(1, 5))
     def test_single_binary_haplotype_k_generations(self, k):
         num_sites = 5

@@ -2108,6 +2108,23 @@ class SequentialExtender:
         else:
             tables = ancestors_ts.dump_tables()
             tables.nodes.time += 1
+            sample_data_sites = sample_data.sites_position[:]
+            ts_sites = tables.sites.position
+            if not np.array_equal(sample_data_sites, ts_sites):
+                # For every site thats in the sample_data file but not
+                # in the ts, assume that everything in the ts carries
+                # the ancestral state.
+                new_sd_sites = np.where(np.isin(sample_data_sites, ts_sites) == 0)[0]
+                for site in sample_data.sites(ids=new_sd_sites):
+                    # FIXME skipping metadata for simplicity
+                    tables.sites.add_row(
+                        position=site.position, ancestral_state=site.ancestral_state
+                    )
+                if len(tables.sites) != sample_data.num_sites:
+                    raise ValueError("Can't deal with missing sites from sd file")
+                # Just sort the sites and mutations
+                tables.sort(edge_start=len(tables.edges))
+
             self.ancestors_ts = tables.tree_sequence()
             # Add in the existing haplotypes. Note - this will probably
             # be slow and might not be necessary/desirable at large scale.
