@@ -1124,6 +1124,9 @@ class Matcher:
             # Currently only used for unsupported extend operation. We can
             # remove in future versions.
             raise ValueError("Cannot currently match with > 2 alleles.")
+        # FIXME workaround for assumptions in low-level code when matching
+        # on sites with no variation
+        num_alleles[num_alleles == 1] = 2
         self.tree_sequence_builder = self.tree_sequence_builder_class(
             num_alleles=num_alleles, max_nodes=max_nodes, max_edges=max_edges
         )
@@ -2108,21 +2111,42 @@ class SequentialExtender:
         else:
             tables = ancestors_ts.dump_tables()
             tables.nodes.time += 1
-            sample_data_sites = sample_data.sites_position[:]
-            ts_sites = tables.sites.position
-            if not np.array_equal(sample_data_sites, ts_sites):
+            sample_data_sites = set(sample_data.sites_position[:])
+            ts_sites = set(tables.sites.position)
+            extra_sites_for_sd = ts_sites - sample_data_sites
+            extra_sites_for_ts = sample_data_sites - ts_sites
+            logging.info(
+                f"Sample data has {len(sample_data_sites)}; " f"ts has {len(ts_sites)}"
+            )
+            if len(extra_sites_for_sd) > 0:
+                ancestral_state = [
+                    ancestors_ts.site(position=pos).ancestral_state
+                    for pos in extra_sites_for_sd
+                ]
+                extra_sites_for_sd = np.array(list(extra_sites_for_sd), dtype=int)
+                extra_sites_for_sd.sort()
+                logger.info(
+                    f"Inserting {len(extra_sites_for_sd)} extra sites to SampleData"
+                )
+                self.sample_data = self.sample_data.insert_sites(
+                    extra_sites_for_sd, ancestral_state=ancestral_state
+                )
+
+            if len(extra_sites_for_ts) > 0:
                 # For every site thats in the sample_data file but not
                 # in the ts, assume that everything in the ts carries
                 # the ancestral state.
-                new_sd_sites = np.where(np.isin(sample_data_sites, ts_sites) == 0)[0]
-                for site in sample_data.sites(ids=new_sd_sites):
+                logger.info(f"Inserting {len(extra_sites_for_ts)} extra sites to ts")
+                extra_sites_for_ts = np.array(list(extra_sites_for_ts), dtype=int)
+                extra_sites_for_ts.sort()
+                site_ids = np.searchsorted(
+                    sample_data.sites_position[:], extra_sites_for_ts
+                )
+                for site in sample_data.sites(ids=site_ids):
                     # FIXME skipping metadata for simplicity
                     tables.sites.add_row(
                         position=site.position, ancestral_state=site.ancestral_state
                     )
-                if len(tables.sites) != sample_data.num_sites:
-                    raise ValueError("Can't deal with missing sites from sd file")
-                # Just sort the sites and mutations
                 tables.sort(edge_start=len(tables.edges))
 
             self.ancestors_ts = tables.tree_sequence()

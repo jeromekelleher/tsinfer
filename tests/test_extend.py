@@ -97,6 +97,52 @@ class TestExtend:
         ts = extender.extend(np.arange(4))
         assert_variants_equal(ts, sd)
 
+    def test_single_haplotype_missing_sites_2_epochs(self):
+        L = 5
+        # First epoch has all sites
+        with tsinfer.SampleData(sequence_length=L) as sd:
+            for j in range(L):
+                sd.add_site(j, [0])
+        extender = tsinfer.SequentialExtender(sd)
+        ts = extender.extend([0])
+        assert ts.num_samples == 1
+        assert ts.num_sites == L
+
+        # Second epoch has even sites
+        with tsinfer.SampleData(sequence_length=L) as sd:
+            for j in range(L):
+                if j % 2 == 0:
+                    sd.add_site(j, [0])
+
+        extender = tsinfer.SequentialExtender(sd, ts)
+        ts = extender.extend([0])
+        assert ts.num_samples == 2
+        assert ts.num_sites == L
+        G = ts.genotype_matrix()
+        assert np.all(G == 0)
+
+    def test_missing_site_ancestral_state(self):
+        # First epoch has all sites
+        with tsinfer.SampleData(sequence_length=4) as sd:
+            sd.add_site(0, [0], alleles=["A"])
+            sd.add_site(1, [0], alleles=["C"])
+            sd.add_site(2, [0], alleles=["T"])
+            sd.add_site(3, [0], alleles=["G"])
+        extender = tsinfer.SequentialExtender(sd)
+        ts = extender.extend([0])
+        assert ts.num_samples == 1
+        assert ts.num_sites == 4
+        assert [site.ancestral_state for site in ts.sites()] == ["A", "C", "T", "G"]
+
+        with tsinfer.SampleData(sequence_length=4) as sd:
+            sd.add_site(0, [0], alleles=["A"])
+            sd.add_site(3, [0], alleles=["G"])
+        extender = tsinfer.SequentialExtender(sd, ts)
+        ts = extender.extend([0])
+        assert ts.num_samples == 2
+        assert ts.num_sites == 4
+        assert [site.ancestral_state for site in ts.sites()] == ["A", "C", "T", "G"]
+
     @pytest.mark.parametrize("k", range(4, 9))
     def test_single_site_4_alleles_rotating(self, k):
         genotypes = np.zeros(k, dtype=int)
@@ -436,5 +482,6 @@ class TestExtendLsParameters:
         # print(ts.tables)
         # print()
         # print(ts.draw_text())
+        # print(ts.tables.mutations[ts.tables.mutations.node == 4])
         # print(ts.tables.mutations[ts.tables.mutations.node == 4])
         # print(ts.tables.mutations)
