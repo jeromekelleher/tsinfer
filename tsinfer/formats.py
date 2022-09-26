@@ -1891,6 +1891,47 @@ class SampleData(DataContainer):
     # Read mode
     ####################################
 
+    def insert_sites(self, position, ancestral_state=None, **kwargs):
+        # Undocumented utility function used as a workaround in some
+        # experimental code.
+        self._check_finalised()
+        position = np.array(position)
+        if ancestral_state is None:
+            ancestral_state = "0" * position.shape[0]
+        if np.any(position[:-1] >= position[1:]):
+            raise ValueError("position values must be sorted and unique")
+        j = 0
+
+        def insert_ancestral_site():
+            nonlocal j
+            # Let add_site catch errors in the position
+            output.add_site(
+                position=position[j],
+                genotypes=np.zeros(self.num_samples, dtype=np.int8),
+                alleles=[ancestral_state[j]],
+            )
+            j += 1
+
+        with SampleData(sequence_length=self.sequence_length, **kwargs) as output:
+            for pop in self.populations():
+                output.add_population(pop.metadata)
+            logger.debug("Copying individual data")
+            output.__insert_individuals(self)
+            logger.debug("Copying variants")
+            for variant in self.variants():
+                while j < position.shape[0] and position[j] < variant.site.position:
+                    insert_ancestral_site()
+                output.add_site(
+                    position=variant.site.position,
+                    genotypes=variant.genotypes,
+                    alleles=variant.alleles,
+                    metadata=variant.site.metadata,
+                    time=variant.site.time,
+                )
+            while j < position.shape[0] and position[j] < self.sequence_length:
+                insert_ancestral_site()
+        return output
+
     def merge(self, other, **kwargs):
         """
         Returns a copy of this SampleData file merged with the specified

@@ -2593,3 +2593,30 @@ class TestBufferedItemWriterThreads2(BufferedItemWriterMixin):
 
 class TestBufferedItemWriterThreads20(BufferedItemWriterMixin):
     num_threads = 20
+
+
+class TestSampleDataInsertSites:
+    def test_one_site_bracketing(self):
+        with tsinfer.SampleData(sequence_length=3) as sd:
+            sd.add_site(1, [1])
+
+        sd2 = sd.insert_sites([0, 2])
+        assert sd2.num_sites == 3
+        np.testing.assert_array_equal(sd2.sites_position, [0, 1, 2])
+        H = list(sd2.haplotypes())
+        assert len(H) == 1
+        np.testing.assert_array_equal(H[0][1], [0, 1, 0])
+
+    def test_two_sites_middle(self):
+        with tsinfer.SampleData(sequence_length=4) as sd:
+            sd.add_site(1, [1])
+            sd.add_site(3, [1])
+
+        sd2 = sd.insert_sites([2])
+        assert sd2.num_sites == 3
+        np.testing.assert_array_equal(sd2.sites_position, [1, 2, 3])
+        H = list(sd2.haplotypes())
+        assert len(H) == 1
+        np.testing.assert_array_equal(H[0][1], [1, 0, 1])
+
+    # TODO add more tests
